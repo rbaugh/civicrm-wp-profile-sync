@@ -124,7 +124,28 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 		$this->civicrm = $parent;
 
 		// Init when the ACF CiviCRM object is loaded.
-		add_action( 'cwps/acf/civicrm/loaded', [ $this, 'register_hooks' ] );
+		add_action( 'cwps/acf/civicrm/loaded', [ $this, 'initialise' ] );
+
+	}
+
+
+
+	/**
+	 * Initialise this object.
+	 *
+	 * @since 0.5.2
+	 */
+	public function initialise() {
+
+		// Register hooks.
+		$this->register_hooks();
+
+		/**
+		 * Broadcast that this class is now loaded.
+		 *
+		 * @since 0.5.2
+		 */
+		do_action( 'cwps/acf/civicrm/attachment/loaded' );
 
 	}
 
