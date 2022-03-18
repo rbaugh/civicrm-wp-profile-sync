@@ -1935,13 +1935,67 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 		$field['uploader'] = 'basic';
 
 		// Set the "max_size" attribute.
-		if ( $this->civicrm->is_initialised() ) {
-			$config = CRM_Core_Config::singleton();
-			$field['max_size'] = $config->maxFileSize;
-		}
+		$field['max_size'] = $this->field_max_size_get();
 
 		// --<
 		return $field;
+
+	}
+
+
+
+	/**
+	 * Gets the maximum file size of Attachments for CiviCRM Entities.
+	 *
+	 * @since 0.5.2
+	 *
+	 * @return integer $max_size The the maximum file size of Attachments.
+	 */
+	public function field_max_size_get() {
+
+		// Default to 3MB.
+		$max_size = 3;
+
+		// Bail if no CiviCRM.
+		if ( ! $this->civicrm->is_initialised() ) {
+			return $max_size;
+		}
+
+		// Get the "max_size" attribute.
+		$config = CRM_Core_Config::singleton();
+		$max_size = $config->maxFileSize;
+
+		// Default to 3MB if not set for some reason.
+		if ( empty( $max_size ) ) {
+			$max_size = 3;
+		}
+
+		// --<
+		return $max_size;
+
+	}
+
+
+
+	/**
+	 * Gets the maximum number of Attachments for CiviCRM Entities.
+	 *
+	 * @since 0.5.2
+	 *
+	 * @return integer $max_attachments The the maximum number of Attachments.
+	 */
+	public function field_max_attachments_get() {
+
+		// Get the Attachments limit.
+		$max_attachments = $this->plugin->civicrm->get_setting( 'max_attachments' );
+
+		// If it's not set for some reason, default to 3.
+		if ( empty( $max_attachments ) ) {
+			$max_attachments = 3;
+		}
+
+		// --<
+		return $max_attachments;
 
 	}
 

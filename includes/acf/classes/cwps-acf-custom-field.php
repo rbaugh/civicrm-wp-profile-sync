@@ -2077,10 +2077,7 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Custom_Field {
 		$field['uploader'] = 'basic';
 
 		// Set the "max_size" attribute.
-		if ( $this->civicrm->is_initialised() ) {
-			$config = CRM_Core_Config::singleton();
-			$field['max_size'] = $config->maxFileSize;
-		}
+		$field['max_size'] = $this->civicrm->attachment->field_max_size_get();
 
 		// --<
 		return $field;
