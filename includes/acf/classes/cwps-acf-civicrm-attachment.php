@@ -167,15 +167,9 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 		// Add CiviCRM listeners once CiviCRM is available.
 		add_action( 'civicrm_config', [ $this, 'civicrm_config' ], 10, 1 );
 
-		// Build array of CiviCRM URLs for filtering the ACF Attachment.
-
-		// When loading values via get_field().
+		// Build array of CiviCRM URLs and maybe filter the ACF Attachment URL.
 		add_filter( 'acf/load_value/type=file', [ $this, 'acf_load_filter' ], 10, 3 );
-
-		// When rendering the Field, e.g. in ACFE front end Forms.
 		add_filter( 'acf/render_field/type=file', [ $this, 'acf_render_filter' ], 9, 3 );
-
-		// Maybe filter the URL of the File.
 		add_filter( 'acf/load_attachment', [ $this, 'acf_attachment_filter' ], 10, 3 );
 
 		// ACF File Fields require additional settings.
@@ -483,6 +477,45 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 
 
 	/**
+	 * Make a copy of a File.
+	 *
+	 * @since 0.5.2
+	 *
+	 * @param string $file The path to the File.
+	 * @param string $new_name The new name of the File.
+	 * @return string|bool $new_file The path to the copied File, or false on failure.
+	 */
+	public function file_copy( $file, $new_name ) {
+
+		// Extract the filename so we can rename it.
+		$filename = pathinfo( $file, PATHINFO_BASENAME );
+
+		// Build path for new File.
+		$new_file = str_replace( $filename, $new_name, $file );
+
+		// Try and copy the File.
+		if ( ! copy( $file, $new_file ) ) {
+			$e = new \Exception();
+			$trace = $e->getTraceAsString();
+			error_log( print_r( [
+				'method' => __METHOD__,
+				'message' => __( 'Could not copy File.', 'civicrm-wp-profile-sync' ),
+				'file' => $file,
+				'new_name' => $new_name,
+				'new_file' => $new_file,
+				'backtrace' => $trace,
+			], true ) );
+			return false;
+		}
+
+		// --<
+		return $new_file;
+
+	}
+
+
+
+	/**
 	 * Make a renamed copy of a WordPress File for CiviCRM to copy.
 	 *
 	 * The CiviCRM API moves a File to the secure directory, so we need to make
@@ -500,26 +533,14 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 			return false;
 		}
 
-		// Extract the filename so we can rename it in CiviCRM style.
+		// Extract the filename.
 		$filename = pathinfo( $file, PATHINFO_BASENAME );
+
+		// Make a new file name in CiviCRM style.
 		$new_name = CRM_Utils_File::makeFileName( $filename );
 
-		// Build path for new File.
-		$new_file = str_replace( $filename, $new_name, $file );
-
-		// Try and copy the File.
-		if ( ! copy( $file, $new_file ) ) {
-			$e = new \Exception();
-			$trace = $e->getTraceAsString();
-			error_log( print_r( [
-				'method' => __METHOD__,
-				'message' => __( 'Could not copy File.', 'civicrm-wp-profile-sync' ),
-				'file' => $file,
-				'new_file' => $new_file,
-				'backtrace' => $trace,
-			], true ) );
-			return false;
-		}
+		// Try and make a copy.
+		$new_file = $this->file_copy( $file, $new_name );
 
 		// --<
 		return $new_file;
@@ -952,7 +973,9 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 
 
 	/**
-	 * Filter the Custom Fields for the Setting of a "File" Field.
+	 * Builds an array of CiviCRM URLs for filtering the ACF Attachment.
+	 *
+	 * This method is called when loading values via get_field().
 	 *
 	 * @since 0.5.2
 	 *
@@ -962,6 +985,11 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 	 * @return mixed $value The modified value.
 	 */
 	public function acf_load_filter( $value, $post_id, $field ) {
+
+		// Skip filter if there is no value.
+		if ( empty( $value ) ) {
+			return $value;
+		}
 
 		// Skip filter if CiviCRM File is not set.
 		if ( empty( $field['civicrm_file_field_type'] ) ) {
@@ -1020,7 +1048,9 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 
 
 	/**
-	 * Filter the Custom Fields for the Setting of a "File" Field.
+	 * Builds an array of CiviCRM URLs for filtering the ACF Attachment.
+	 *
+	 * This method is called when rendering the Field, e.g. in ACFE front end Forms.
 	 *
 	 * @since 0.5.2
 	 *
@@ -1090,7 +1120,7 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 
 
 	/**
-	 * Filter the Custom Fields for the Setting of a "File" Field.
+	 * Maybe filter the URL of the File.
 	 *
 	 * @since 0.5.2
 	 *
@@ -1121,13 +1151,7 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 
 
 	/**
-	 * Get the value of an ACF "File" Field formatted for CiviCRM.
-	 *
-	 * The only kind of sync that an ACF File Field can do at the moment is to
-	 * sync with a CiviCRM Custom Field.
-	 *
-	 * Other CiviCRM Entities can also accept files as "Attachments" but we'll
-	 * return to that later.
+	 * Get the value of an ACF "File" Field formatted for a CiviCRM Custom Field.
 	 *
 	 * The ACF File Field return format can be either 'array', 'url' or 'id' so
 	 * we need to extract the appropriate file info to send to CiviCRM.
