@@ -256,12 +256,8 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 			return;
 		}
 
-		// Add callback for CiviCRM "preDelete" hook.
-		Civi::service( 'dispatcher' )->addListener(
-			'civi.dao.preDelete',
-			[ $this, 'civicrm_file_pre_delete' ],
-			-100 // Default priority.
-		);
+		// Intercept before a CiviCRM File/Attachment is deleted.
+		add_action( 'cwps/acf/mapper/attachment/delete/pre', [ $this, 'civicrm_file_pre_delete' ], 10 );
 
 		// Declare registered.
 		$this->civicrm_hooks = true;
@@ -282,11 +278,8 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 			return;
 		}
 
-		// Remove callback for CiviCRM "preDelete" hook.
-		Civi::service( 'dispatcher' )->removeListener(
-			'civi.dao.preDelete',
-			[ $this, 'civicrm_file_pre_delete' ]
-		);
+		// Remove Mapper callbacks.
+		remove_action( 'cwps/acf/mapper/attachment/delete/pre', [ $this, 'civicrm_file_pre_delete' ], 10 );
 
 		// Declare unregistered.
 		$this->civicrm_hooks = false;
@@ -1644,54 +1637,46 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 	 * File deletion process because the "Entity File" has already been deleted.
 	 * We can use the File API, however *happy face*.
 	 *
+	 * I have opened an issue and PR that allows us to distinguish between Files
+	 * that are "Attachments" and Files that are uploaded to Custom Fields to be
+	 * distinguished from one another.
+	 *
+	 * With the patch in the GitHub PR, this method is able to delete
+	 *
+	 * @see https://lab.civicrm.org/dev/core/-/issues/3130
+	 * @see https://github.com/civicrm/civicrm-core/pull/22994
+	 *
 	 * @since 0.5.2
 	 *
-	 * @param object $event The event object.
-	 * @param string $hook The hook name.
+	 * @param array $args The CiviCRM arguments.
 	 */
-	public function civicrm_file_pre_delete( $event, $hook ) {
+	public function civicrm_file_pre_delete( $args ) {
 
-		// Extract CiviCRM Entity Tag for this hook.
-		$entity_tag =& $event->object;
+		// We have my patch if there is a CiviCRM Attachment.
+		if ( ! empty( $args['attachment'] ) ) {
 
-		// Bail if this isn't the type of object we're after.
-		if ( ! ( $entity_tag instanceof CRM_Core_BAO_EntityTag ) ) {
+			// Bail if this is not a File attached to a Custom Field.
+			if ( strstr( $args['attachment']->entity_table, 'civicrm_value_' ) === false ) {
+				return;
+			}
+
+			/*
+			// Pass to separate method and skip.
+			$this->civicrm_attachment_pre_delete( $args );
 			return;
+			*/
+
 		}
 
-		// Make sure we have an Entity Table.
-		if ( empty( $entity_tag->entity_table ) ) {
-			return;
-		}
-
-		// Bail if this doesn't refer to a "File".
-		if ( $entity_tag->entity_table !== 'civicrm_file' ) {
-			return;
-		}
-
-		// Bail if there's no Entity ID.
-		if ( empty( $entity_tag->entity_id ) ) {
-			return;
-		}
-
-		// The Entity ID happens to be the CiviCRM File ID.
-
-		// Get the CiviCRM File being deleted.
-		$civicrm_file = $this->file_get_by_id( $entity_tag->entity_id );
-		if ( $civicrm_file === false ) {
-			return;
-		}
-
-		// Let's try and find a WordPress Attachment.
-		$attachment_id = $this->query_by_file( $civicrm_file->uri, 'civicrm' );
-		if ( empty( $attachment_id ) ) {
+		// Sanity check.
+		if ( empty( $args['objectRef'] ) ) {
 			return;
 		}
 
 		/*
-		 * We have found our way to the WordPress Attachment.
-		 *
 		 * What do we want to do now?
+		 *
+		 * When we have found our way to the WordPress Attachment:
 		 *
 		 * We could delete it, which would at least guarantee that all ACF Fields
 		 * that relate to it will refer to a non-existent Attachment.
@@ -1704,6 +1689,12 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 		 * @see CiviCRM_Profile_Sync_ACF_CiviCRM_Contact_Field::image_attachment_deleted()
 		 */
 
+		// Let's try and find a WordPress Attachment.
+		$attachment_id = $this->query_by_file( $args['objectRef']->uri, 'civicrm' );
+		if ( empty( $attachment_id ) ) {
+			return;
+		}
+
 		// Save metadata.
 		$data = [
 			'wordpress_file' => get_attached_file( $attachment_id, true ),
@@ -1712,6 +1703,67 @@ class CiviCRM_Profile_Sync_ACF_CiviCRM_Attachment {
 
 		// Force-delete the Attachment.
 		wp_delete_attachment( $attachment_id, true );
+
+	}
+
+
+
+	/**
+	 * Update the ACF Fields that need their Attachment ID removed.
+	 *
+	 * It seems remarkably difficult to work backwards from the Attachment to
+	 * the Entities and Custom Fields to which that File is assigned. Keeping
+	 * this code here to remind me where I got to.
+	 *
+	 * @since 0.5.2
+	 *
+	 * @param array $args The CiviCRM arguments.
+	 */
+	public function civicrm_attachment_pre_delete( $args ) {
+
+		/*
+		$e = new \Exception();
+		$trace = $e->getTraceAsString();
+		error_log( print_r( array(
+			'method' => __METHOD__,
+			'args' => $args,
+			//'backtrace' => $trace,
+		), true ) );
+		*/
+
+		// Make sure we have an Entity Table.
+		if ( empty( $args['attachment']->entity_table ) ) {
+			return;
+		}
+
+		// Get the Custom Group for this Entity Table.
+		$custom_group = $this->plugin->custom_group->get_by_entity_table( $args['attachment']->entity_table );
+		if ( empty( $custom_group ) ) {
+			return;
+		}
+
+		$params = [
+			'version' => 3,
+			'sequential' => 1,
+			'custom_group_id' => $custom_group['id'],
+			'data_type' => "File",
+		];
+
+		// This will return the Custom Fields of type "File" in that Group.
+		$result = civicrm_api( 'CustomField', 'get', $params );
+
+		/*
+		 * We can tell the CiviCRM Entity by the Custom Group "entity" value.
+		 *
+		 * Can we query that Entity using 'custom_N' for Fields with the value
+		 * of the File ID? Will that help? I'm note sure yet.
+		 *
+		 * It looks at the moment as though its good enough just to delete the
+		 * WordPress Attachment - although my patch is needed so that deleting
+		 * CiviCRM Attachments on Activitiesn (for example) can also update the
+		 * "CiviCRM Activity: Attachments" ACF Fields so they don't lose their
+		 * data integrity.
+		 */
 
 	}
 
