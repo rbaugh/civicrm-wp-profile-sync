@@ -104,6 +104,7 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 	 * @var array $fields_to_add The Public Contact Fields to add.
 	 */
 	public $fields_to_add = [
+		'display_name' => 'text',
 		'id' => 'number',
 	];
 
@@ -307,7 +308,7 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 			$this->mapping_field_filters_add( 'note_' . $note_field['name'] );
 		}
 
-		// Note Ref Field.
+		// Add Note Ref Field.
 		$this->mapping_field_filters_add( 'note_conditional' );
 
 		// Get the public Attachment Fields.
@@ -740,11 +741,16 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 	 */
 	public function validation( $form, $current_post_id, $action ) {
 
+		// Validate the Contact data.
+		$valid = $this->form_contact_validate( $form, $current_post_id, $action );
+		if ( ! $valid ) {
+			return;
+		}
+
+		// TODO: Check other Contact Entities.
+
 		/*
-		// Get some Form details.
-		$form_name = acf_maybe_get( $form, 'name' );
-		$form_id = acf_maybe_get( $form, 'ID' );
-		//acfe_add_validation_error( $selector, $message );
+		acfe_add_validation_error( $selector, $message );
 		*/
 
 	}
@@ -3519,6 +3525,79 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 
 
 	/**
+	 * Validates the Contact data array from mapped Fields.
+	 *
+	 * @since 0.5.2
+	 *
+	 * @param array $form The array of Form data.
+	 * @param integer $current_post_id The ID of the Post from which the Form has been submitted.
+	 * @param string $action The customised name of the action.
+	 * @return bool $valid True if the Contact can be saved, false otherwise.
+	 */
+	public function form_contact_validate( $form, $current_post_id, $action ) {
+
+		// Get some Form details.
+		$form_name = acf_maybe_get( $form, 'name' );
+		$form_id = acf_maybe_get( $form, 'ID' );
+
+		// Get the Contact.
+		$contact = $this->form_contact_data( $form, $current_post_id, $action );
+
+		// Skip validation if the Contact Conditional Reference Field has a value.
+		if ( ! empty( $contact['contact_conditional_ref'] ) ) {
+			// And the Contact Conditional Field has no value.
+			if ( empty( $contact['contact_conditional'] ) ) {
+				return true;
+			}
+		}
+
+		$emails = $this->form_email_data( $form, $current_post_id, $action );
+		$relationships = $this->form_relationship_data( $form, $current_post_id, $action );
+
+		// Get the Contact ID with the data from the Form.
+		$contact_id = $this->form_contact_id_get( $contact, $emails, $relationships );
+
+		// All's well if we get a Contact ID.
+		if ( ! empty( $contact_id ) ) {
+			return true;
+		}
+
+		// Check if we have the minimum data necessary to create a Contact.
+		$display = false;
+		if ( ! empty( $contact['display_name'] ) ) {
+			$display = true;
+		}
+		$first_last = false;
+		if ( ! empty( $contact['first_name'] ) && ! empty( $contact['last_name'] ) ) {
+			$first_last = true;
+		}
+
+		// All's well if we can create the Contact with what we have.
+		if ( $first_last || $display ) {
+			return true;
+		}
+
+		// All's well if there is an Email to assign as the Display Name.
+		$email = $this->form_email_primary_get( $emails );
+		if ( ! empty( $email ) ) {
+			return true;
+		}
+
+		// Reject the submission.
+		acfe_add_validation_error( '', sprintf(
+			/* translators: %s The name of the Form Action */
+			__( 'Not enough data to save a Contact in "%s".', 'civicrm-wp-profile-sync' ),
+			$action
+		) );
+
+		// Not valid.
+		return false;
+
+	}
+
+
+
+	/**
 	 * Saves the CiviCRM Contact given data from mapped Fields.
 	 *
 	 * @since 0.5
@@ -3563,7 +3642,48 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 
 		// Create or update depending on the presence of an ID.
 		if ( $contact_id === false ) {
+
+			/*
+			 * Check if we have the minimum data necessary to create a Contact.
+			 *
+			 * We are mirroring the logic in the CiviCRM admin UI here such that
+			 * "First Name" and "Last Name" OR an Email must be set.
+			 *
+			 * Unlike the CiviCRM UI, this plugin also allows a "Display Name"
+			 * to be set instead.
+			 *
+			 * The CiviCRM UI also supports "an OpenID in the Primary Location"
+			 * so this plugin should also do so in future.
+			 *
+			 * @see self::validation()
+			 */
+			$first_last = false;
+			if ( ! empty( $contact_data['first_name'] ) && ! empty( $contact_data['last_name'] ) ) {
+				$first_last = true;
+			}
+			$display = false;
+			if ( ! empty( $contact_data['display_name'] ) ) {
+				$display = true;
+			}
+
+			// If we can't create the Contact with what we have.
+			if ( ! $first_last && ! $display ) {
+				// Try and assign an Email as the Display Name.
+				$email = $this->form_email_primary_get( $email_data );
+				if ( ! empty( $email ) ) {
+					$contact_data['display_name'] = $email;
+					$display = true;
+				}
+			}
+
+			// Bail if we still can't create the Contact.
+			if ( ! $first_last && ! $display ) {
+				return $contact;
+			}
+
+			// Okay, we should be good to create the Contact.
 			$result = $this->plugin->civicrm->contact->create( $contact_data );
+
 		} else {
 
 			// Use the Contact ID to update.
@@ -4177,6 +4297,13 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 				}
 			}
 
+			// TODO: Do we need a "Delete record if Email is empty" option?
+
+			// Skip if there is no Email Address to save.
+			if ( empty( $email['email'] ) ) {
+				continue;
+			}
+
 			// Update the Email.
 			$result = $this->civicrm->email->email_record_update( $contact['id'], $email );
 
@@ -4192,6 +4319,69 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 
 		// --<
 		return $emails;
+
+	}
+
+
+
+	/**
+	 * Gets the CiviCRM Primary Email from parsed data.
+	 *
+	 * This is used to find an Email Address to use as the Contact "Display Name"
+	 * when no "First Name" & "Last Name" or "Display Name" are provided in the
+	 * Form data and a Contact is being created. This ensures that a Contact is
+	 * created, mirroring how the CiviCRM UI works.
+	 *
+	 * @since 0.5.2
+	 *
+	 * @param array $email_data The array of Email data.
+	 * @return string|bool $email The Email Address, or false on failure.
+	 */
+	public function form_email_primary_get( $email_data ) {
+
+		// Init return.
+		$email = false;
+
+		// Bail if there's no Email data.
+		if ( empty( $email_data ) ) {
+			return $email;
+		}
+
+		// Handle each item in turn.
+		foreach ( $email_data as $email_item ) {
+
+			// Strip out empty Fields.
+			$email_item = $this->form_data_prepare( $email_item );
+
+			// Only skip if the Email Conditional Reference Field has a value.
+			if ( ! empty( $email_item['email_conditional_ref'] ) ) {
+				// And the Email Conditional Field has a value.
+				if ( empty( $email_item['email_conditional'] ) ) {
+					continue;
+				}
+			}
+
+			// Skip if there's no Email.
+			if ( empty( $email_item['email'] ) ) {
+				continue;
+			}
+
+			// If we find the Primary Email, skip the rest.
+			if ( ! empty( $email_item['is_primary'] ) ) {
+				$email = $email_item['email'];
+				break;
+			}
+
+			/*
+			 * Let's set the return so it is populated with something - in case
+			 * there is no Primary Email in the data.
+			 */
+			$email = $email_item['email'];
+
+		}
+
+		// --<
+		return $email;
 
 	}
 
@@ -4651,17 +4841,19 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 			// Strip out empty Fields.
 			$website = $this->form_data_prepare( $website );
 
-			// Skip if there's no Website URL.
-			if ( empty( $website['url'] ) ) {
-				continue;
-			}
-
 			// Only skip if the Website Conditional Reference Field has a value.
 			if ( ! empty( $website['website_conditional_ref'] ) ) {
 				// And the Website Conditional Field has a value.
 				if ( empty( $website['website_conditional'] ) ) {
 					continue;
 				}
+			}
+
+			// TODO: Do we need a "Delete record if Website is empty" option?
+
+			// Skip if there's no Website URL.
+			if ( empty( $website['url'] ) ) {
+				continue;
 			}
 
 			// Update the Website.
@@ -5090,17 +5282,19 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 			// Strip out empty Fields.
 			$im = $this->form_data_prepare( $im );
 
-			// Skip if there's no Instant Messenger.
-			if ( empty( $im['name'] ) ) {
-				continue;
-			}
-
 			// Only skip if the Instant Messenger Conditional Reference Field has a value.
 			if ( ! empty( $im['im_conditional_ref'] ) ) {
 				// And the Instant Messenger Conditional Field has a value.
 				if ( empty( $im['im_conditional'] ) ) {
 					continue;
 				}
+			}
+
+			// TODO: Do we need a "Delete record if Instant Messenger is empty" option?
+
+			// Skip if there's no Instant Messenger.
+			if ( empty( $im['name'] ) ) {
+				continue;
 			}
 
 			// Try and get the Phone Record.
@@ -5226,17 +5420,19 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 		// Handle each nested Action in turn.
 		foreach ( $group_data as $group ) {
 
-			// Skip if there's no Group ID.
-			if ( empty( $group['group_id'] ) ) {
-				continue;
-			}
-
 			// Only skip if the Group Conditional Reference Field has a value.
 			if ( ! empty( $group['group_conditional_ref'] ) ) {
 				// And the Group Conditional Field has a value.
 				if ( empty( $group['group_conditional'] ) ) {
 					continue;
 				}
+			}
+
+			// TODO: Do we need a "Remove from Group if Group is empty" option?
+
+			// Skip if there's no Group ID.
+			if ( empty( $group['group_id'] ) ) {
+				continue;
 			}
 
 			// Skip if already a Group Member.
@@ -5361,17 +5557,17 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 			// Strip out empty Fields.
 			$membership = $this->form_data_prepare( $membership );
 
-			// Skip if there's no Membership Type ID.
-			if ( empty( $membership['membership_type_id'] ) ) {
-				continue;
-			}
-
 			// Only skip if the Membership Conditional Reference Field has a value.
 			if ( ! empty( $membership['membership_conditional_ref'] ) ) {
 				// And the Membership Conditional Field has a value.
 				if ( empty( $membership['membership_conditional'] ) ) {
 					continue;
 				}
+			}
+
+			// Skip if there's no Membership Type ID.
+			if ( empty( $membership['membership_type_id'] ) ) {
+				continue;
 			}
 
 			// Skip if Contact already has a current Membership.
@@ -5498,17 +5694,17 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 			// Strip out empty Fields.
 			$note = $this->form_data_prepare( $note );
 
-			// Skip if there's no Note.
-			if ( empty( $note['note'] ) ) {
-				continue;
-			}
-
 			// Only skip if the Note Conditional Reference Field has a value.
 			if ( ! empty( $note['note_conditional_ref'] ) ) {
 				// And the Note Conditional Field has a value.
 				if ( empty( $note['note_conditional'] ) ) {
 					continue;
 				}
+			}
+
+			// Skip if there's no Note.
+			if ( empty( $note['note'] ) ) {
+				continue;
 			}
 
 			// Add necessary params.
@@ -5769,17 +5965,19 @@ class CiviCRM_Profile_Sync_ACF_ACFE_Form_Action_Contact extends CiviCRM_Profile_
 		// Handle each nested Action in turn.
 		foreach ( $tag_data as $tag ) {
 
-			// Skip if there's no Tag ID.
-			if ( empty( $tag['tag_ids'] ) ) {
-				continue;
-			}
-
 			// Only skip if the Tag Conditional Reference Field has a value.
 			if ( ! empty( $tag['tag_conditional_ref'] ) ) {
 				// And the Tag Conditional Field has a value.
 				if ( empty( $tag['tag_conditional'] ) ) {
 					continue;
 				}
+			}
+
+			// TODO: Do we need a "Delete Tag if Tag is empty" option?
+
+			// Skip if there's no Tag ID.
+			if ( empty( $tag['tag_ids'] ) ) {
+				continue;
 			}
 
 			// Handle each Tag in turn.

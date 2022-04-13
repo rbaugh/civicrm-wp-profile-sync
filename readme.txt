@@ -5,7 +5,7 @@ Tags: civicrm, user, buddypress, acf, profile, xprofile, sync
 Requires at least: 4.9
 Tested up to: 5.9
 Requires PHP: 7.1
-Stable tag: 0.5.2a
+Stable tag: 0.5.3a
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -85,6 +85,12 @@ I'll say it again: test early, test often and - above all - test on a developmen
 
 
 == Changelog ==
+
+= 0.5.2 =
+
+* Improves handling of CiviCRM Websites.
+* Improves handling of CiviCRM Contact Images.
+* Misc bug fixes.
 
 = 0.5.1 =
 
