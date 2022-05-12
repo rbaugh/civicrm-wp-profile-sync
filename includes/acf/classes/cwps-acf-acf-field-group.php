@@ -155,6 +155,9 @@ class CiviCRM_Profile_Sync_ACF_Field_Group {
 		 * @see CiviCRM_Profile_Sync_ACF_CiviCRM_Contact::query_field_group_mapped()
 		 * @see CiviCRM_Profile_Sync_ACF_CiviCRM_Activity::query_field_group_mapped()
 		 * @see CiviCRM_Profile_Sync_ACF_CiviCRM_Participant::query_field_group_mapped()
+		 * @see CiviCRM_Profile_Sync_ACF_CiviCRM_Participant_CPT::query_field_group_mapped()
+		 * @see CiviCRM_Profile_Sync_ACF_User::query_field_group_mapped()
+		 * @see CiviCRM_Profile_Sync_ACF_ACFE_Form::query_field_group_mapped()
 		 *
 		 * @since 0.4
 		 *
@@ -238,11 +241,6 @@ class CiviCRM_Profile_Sync_ACF_Field_Group {
 	 */
 	public function get_for_field( $field ) {
 
-		// We need a Field ID.
-		if ( empty( $field['ID'] ) ) {
-			return false;
-		}
-
 		// Only do this once per Field.
 		static $pseudocache;
 		if ( isset( $pseudocache[ $field['ID'] ] ) ) {
@@ -278,8 +276,14 @@ class CiviCRM_Profile_Sync_ACF_Field_Group {
 
 		}
 
-		// Maybe add to pseudo-cache.
-		if ( ! isset( $pseudocache[ $field['ID'] ] ) ) {
+		/*
+		 * Maybe add to pseudo-cache.
+		 *
+		 * Only add if there is a Field ID - new ACF Fields don't have one but
+		 * we still want to add the Settings Field when a new ACF Field is added
+		 * and the ACF AJAX call runs.
+		 */
+		if ( ! isset( $pseudocache[ $field['ID'] ] ) && ! empty( $field['ID'] ) ) {
 			$pseudocache[ $field['ID'] ] = $field_group;
 		}
 
